@@ -1,0 +1,92 @@
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.MergeCommand;
+import org.eclipse.jgit.api.MergeResult;
+import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
+
+public class BranchMerger {
+    private static final String REPO_PATH = "/path/to/your/repo";
+    private static final String EXCEL_PATH = "/path/to/merge_report.xlsx";
+    private static final List<String> BRANCHES_TO_MERGE = List.of("feature/login", "feature/payment");
+
+    public static void main(String[] args) {
+        try (Workbook workbook = new XSSFWorkbook()) {
+            // Initialize Git repository
+            Repository repository = new FileRepositoryBuilder()
+                    .setGitDir(Paths.get(REPO_PATH, ".git").toFile())
+                    .build();
+            
+            try (Git git = new Git(repository)) {
+                // Checkout main branch
+                git.checkout()
+                        .setName("main")
+                        .call();
+
+                // Create Excel sheet
+                Sheet sheet = workbook.createSheet("Merge Report");
+                createHeaderRow(sheet);
+
+                int rowNum = 1;
+                
+                // Merge each branch
+                for (String branch : BRANCHES_TO_MERGE) {
+                    MergeResult mergeResult = git.merge()
+                            .include(repository.findRef("refs/heads/" + branch))
+                            .setCommit(true)
+                            .call();
+
+                    // Log merge details to Excel
+                    if (mergeResult.getMergeStatus().isSuccessful()) {
+                        Iterable<RevCommit> commits = git.log()
+                                .addRange(
+                                        repository.resolve("main@{1}"),
+                                        repository.resolve("HEAD"))
+                                .call();
+
+                        for (RevCommit commit : commits) {
+                            addMergeRecord(sheet, rowNum++, branch, commit);
+                        }
+                    }
+                }
+
+                // Save Excel file
+                try (FileOutputStream outputStream = new FileOutputStream(EXCEL_PATH)) {
+                    workbook.write(outputStream);
+                }
+            }
+            
+            System.out.println("Merge completed successfully. Report saved to: " + EXCEL_PATH);
+        } catch (IOException | GitAPIException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static void createHeaderRow(Sheet sheet) {
+        Row headerRow = sheet.createRow(0);
+        headerRow.createCell(0).setCellValue("Branch");
+        headerRow.createCell(1).setCellValue("Commit ID");
+        headerRow.createCell(2).setCellValue("Author");
+        headerRow.createCell(3).setCellValue("Date");
+        headerRow.createCell(4).setCellValue("Message");
+    }
+
+    private static void addMergeRecord(Sheet sheet, int rowNum, String branch, RevCommit commit) {
+        Row row = sheet.createRow(rowNum);
+        row.createCell(0).setCellValue(branch);
+        row.createCell(1).setCellValue(commit.getName());
+        row.createCell(2).setCellValue(commit.getAuthorIdent().getName());
+        row.createCell(3).setCellValue(commit.getAuthorIdent().getWhen().toString());
+        row.createCell(4).setCellValue(commit.getShortMessage());
+    }
+}
